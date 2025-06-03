@@ -1,0 +1,9 @@
+Suggested Improvements to make it more flexible:
+Add a sport/category field to tournaments and teams
+Add sport-specific scoring systems
+Add player roster management with positions specific to each sport
+Add sport-specific match statistics
+
+
+username: admin
+password: admin123
