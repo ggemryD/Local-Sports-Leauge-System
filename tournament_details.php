@@ -98,6 +98,83 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["update_match"])){
         }
     }
 }
+
+// Generate Bracket
+if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["generate_bracket"])){
+    // Get all teams in tournament
+    $teams = [];
+    $teams_sql = "SELECT team_id FROM tournament_teams WHERE tournament_id = ?";
+    if($teams_stmt = mysqli_prepare($conn, $teams_sql)){
+        mysqli_stmt_bind_param($teams_stmt, "i", $tournament_id);
+        mysqli_stmt_execute($teams_stmt);
+        $teams_result = mysqli_stmt_get_result($teams_stmt);
+        while($row = mysqli_fetch_assoc($teams_result)){
+            $teams[] = $row['team_id'];
+        }
+    }
+
+    if(count($teams) < 2){
+        $_SESSION["error"] = "At least 2 teams are required to generate a bracket.";
+    } else {
+        // Clear existing matches first? Or just add new ones? 
+        // Let's just add new ones for now, but usually users want a fresh start.
+        
+        $match_date = date('Y-m-d H:i:s', strtotime('+1 day'));
+        
+        if($elimination_type == 'round_robin'){
+            // Round Robin: Everyone plays everyone
+            for($i = 0; $i < count($teams); $i++){
+                for($j = $i + 1; $j < count($teams); $j++){
+                    $insert_match = "INSERT INTO matches (tournament_id, team1_id, team2_id, match_date) VALUES (?, ?, ?, ?)";
+                    if($stmt = mysqli_prepare($conn, $insert_match)){
+                        mysqli_stmt_bind_param($stmt, "iiis", $tournament_id, $teams[$i], $teams[$j], $match_date);
+                        mysqli_stmt_execute($stmt);
+                        $match_date = date('Y-m-d H:i:s', strtotime($match_date . ' + 2 hours'));
+                    }
+                }
+            }
+            $_SESSION["success"] = "Round Robin bracket generated successfully!";
+        } else {
+            // Single or Double Elimination (First Round)
+            shuffle($teams);
+            for($i = 0; $i < count($teams) - 1; $i += 2){
+                $insert_match = "INSERT INTO matches (tournament_id, team1_id, team2_id, match_date) VALUES (?, ?, ?, ?)";
+                if($stmt = mysqli_prepare($conn, $insert_match)){
+                    mysqli_stmt_bind_param($stmt, "iiis", $tournament_id, $teams[$i], $teams[$i+1], $match_date);
+                    mysqli_stmt_execute($stmt);
+                    $match_date = date('Y-m-d H:i:s', strtotime($match_date . ' + 2 hours'));
+                }
+            }
+            if(count($teams) % 2 != 0){
+                $_SESSION["info"] = "Bracket generated. One team received a bye as there was an odd number of teams.";
+            } else {
+                $_SESSION["success"] = "First round bracket generated successfully!";
+            }
+        }
+        
+        // Update tournament status to ongoing
+        mysqli_query($conn, "UPDATE tournaments SET status = 'ongoing' WHERE id = $tournament_id AND status = 'upcoming'");
+        
+        header("location: tournament_details.php?id=" . $tournament_id);
+        exit;
+    }
+}
+
+// Clear Matches
+if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["clear_matches"])){
+    $clear_sql = "DELETE FROM matches WHERE tournament_id = ?";
+    if($clear_stmt = mysqli_prepare($conn, $clear_sql)){
+        mysqli_stmt_bind_param($clear_stmt, "i", $tournament_id);
+        mysqli_stmt_execute($clear_stmt);
+        
+        // Reset team records
+        mysqli_query($conn, "UPDATE tournament_teams SET wins = 0, losses = 0, points = 0 WHERE tournament_id = $tournament_id");
+        
+        $_SESSION["success"] = "All matches cleared and standings reset.";
+        header("location: tournament_details.php?id=" . $tournament_id);
+        exit;
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -312,6 +389,27 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["update_match"])){
 
             <!-- Main Content -->
             <div class="col-md-10 main-content">
+                <?php if(isset($_SESSION["success"])): ?>
+                    <div class="alert alert-success alert-dismissible fade show" role="alert">
+                        <?php echo $_SESSION["success"]; unset($_SESSION["success"]); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                <?php endif; ?>
+
+                <?php if(isset($_SESSION["error"])): ?>
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <?php echo $_SESSION["error"]; unset($_SESSION["error"]); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                <?php endif; ?>
+
+                <?php if(isset($_SESSION["info"])): ?>
+                    <div class="alert alert-info alert-dismissible fade show" role="alert">
+                        <?php echo $_SESSION["info"]; unset($_SESSION["info"]); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                <?php endif; ?>
+
                 <!-- Tournament Header -->
                 <div class="tournament-header">
                     <div class="d-flex justify-content-between align-items-center">
@@ -383,9 +481,21 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["update_match"])){
                         <div class="card">
                             <div class="card-header d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0"><i class='bx bx-game me-2'></i>Matches</h5>
-                                <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#scheduleMatchModal">
-                                    <i class='bx bx-calendar-plus'></i> Schedule Match
-                                </button>
+                                <div class="d-flex gap-2">
+                                    <form method="post" onsubmit="return confirm('This will generate matches based on the current teams. Continue?');">
+                                        <button type="submit" name="generate_bracket" class="btn btn-info btn-sm text-white">
+                                            <i class='bx bx-git-merge'></i> Auto-Generate
+                                        </button>
+                                    </form>
+                                    <form method="post" onsubmit="return confirm('Are you sure you want to clear all matches and reset standings?');">
+                                        <button type="submit" name="clear_matches" class="btn btn-danger btn-sm">
+                                            <i class='bx bx-trash'></i> Clear All
+                                        </button>
+                                    </form>
+                                    <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#scheduleMatchModal">
+                                        <i class='bx bx-calendar-plus'></i> Schedule Match
+                                    </button>
+                                </div>
                             </div>
                             <div class="card-body">
                                 <?php
