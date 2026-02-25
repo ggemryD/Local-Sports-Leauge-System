@@ -94,6 +94,111 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["update_match"])){
                                    WHERE tournament_id = $tournament_id AND team_id = $winner_id");
                 mysqli_query($conn, "UPDATE tournament_teams SET losses = losses + 1 
                                    WHERE tournament_id = $tournament_id AND team_id = $loser_id");
+
+                // Automatic Progression for Single Elimination
+                if($elimination_type == 'single'){
+                    // Get current match info
+                    $cur_match_sql = "SELECT round, match_number FROM matches WHERE id = ?";
+                    if($cur_stmt = mysqli_prepare($conn, $cur_match_sql)){
+                        mysqli_stmt_bind_param($cur_stmt, "i", $match_id);
+                        mysqli_stmt_execute($cur_stmt);
+                        $cur_match = mysqli_fetch_assoc(mysqli_stmt_get_result($cur_stmt));
+                        $cur_round = $cur_match['round'];
+                        $cur_match_num = $cur_match['match_number'];
+
+                        // Calculate next match position
+                        $next_round = $cur_round + 1;
+                        $next_match_num = ceil($cur_match_num / 2);
+                        $is_team1 = ($cur_match_num % 2 != 0); // Odd match numbers are team1 in next round
+
+                        // Check if the next match already exists
+                        $check_next_sql = "SELECT id FROM matches WHERE tournament_id = ? AND round = ? AND match_number = ?";
+                        if($check_stmt = mysqli_prepare($conn, $check_next_sql)){
+                            mysqli_stmt_bind_param($check_stmt, "iii", $tournament_id, $next_round, $next_match_num);
+                            mysqli_stmt_execute($check_stmt);
+                            $next_match_res = mysqli_stmt_get_result($check_stmt);
+                            
+                            if(mysqli_num_rows($next_match_res) > 0){
+                                // Update existing next round match
+                                $next_match = mysqli_fetch_assoc($next_match_res);
+                                $next_match_id = $next_match['id'];
+                                $update_next_sql = $is_team1 ? 
+                                    "UPDATE matches SET team1_id = ? WHERE id = ?" : 
+                                    "UPDATE matches SET team2_id = ? WHERE id = ?";
+                                if($upd_stmt = mysqli_prepare($conn, $update_next_sql)){
+                                    mysqli_stmt_bind_param($upd_stmt, "ii", $winner_id, $next_match_id);
+                                    mysqli_stmt_execute($upd_stmt);
+                                }
+                            } else {
+                                // Create new next round match
+                                $insert_next_sql = $is_team1 ? 
+                                    "INSERT INTO matches (tournament_id, team1_id, round, match_number, match_date) VALUES (?, ?, ?, ?, ?)" : 
+                                    "INSERT INTO matches (tournament_id, team2_id, round, match_number, match_date) VALUES (?, ?, ?, ?, ?)";
+                                if($ins_stmt = mysqli_prepare($conn, $insert_next_sql)){
+                                    $next_match_date = date('Y-m-d H:i:s', strtotime('+1 day'));
+                                    mysqli_stmt_bind_param($ins_stmt, "iiiis", $tournament_id, $winner_id, $next_round, $next_match_num, $next_match_date);
+                                    mysqli_stmt_execute($ins_stmt);
+                                }
+                            }
+                        }
+
+                        // Check if it was the final (determine 1st and 2nd)
+                        // For simplicity, we can check if there are any more matches in the next round
+                        // or if this was the last match possible.
+                        // Better: If no next round is possible (e.g., only 1 match in current round), it's the final.
+                        $matches_in_round_sql = "SELECT COUNT(*) as count FROM tournament_teams WHERE tournament_id = ?";
+                        $tt_res = mysqli_query($conn, $matches_in_round_sql);
+                        $total_teams = mysqli_fetch_assoc($tt_res)['count'];
+                        $max_rounds = ceil(log($total_teams, 2));
+                        
+                        if($cur_round == $max_rounds){
+                            // This was the final
+                            mysqli_query($conn, "UPDATE tournament_teams SET rank = 1 WHERE tournament_id = $tournament_id AND team_id = $winner_id");
+                            mysqli_query($conn, "UPDATE tournament_teams SET rank = 2 WHERE tournament_id = $tournament_id AND team_id = $loser_id");
+                            mysqli_query($conn, "UPDATE tournaments SET status = 'completed' WHERE id = $tournament_id");
+                        }
+                        
+                        // Handle 3rd Place Match (if it was a semifinal)
+                        if($cur_round == $max_rounds - 1){
+                            // This was a semifinal. Create/Update 3rd place match.
+                            $third_place_match_num = 1;
+                            $round_3rd = $max_rounds + 1; // Special round for 3rd place
+                            
+                            $check_3rd_sql = "SELECT id FROM matches WHERE tournament_id = ? AND round = ? AND match_number = ?";
+                            if($check_3rd_stmt = mysqli_prepare($conn, $check_3rd_sql)){
+                                mysqli_stmt_bind_param($check_3rd_stmt, "iii", $tournament_id, $round_3rd, $third_place_match_num);
+                                mysqli_stmt_execute($check_3rd_stmt);
+                                $res_3rd = mysqli_stmt_get_result($check_3rd_stmt);
+                                
+                                if(mysqli_num_rows($res_3rd) > 0){
+                                    $match_3rd = mysqli_fetch_assoc($res_3rd);
+                                    $match_3rd_id = $match_3rd['id'];
+                                    $upd_3rd_sql = $is_team1 ? 
+                                        "UPDATE matches SET team1_id = ? WHERE id = ?" : 
+                                        "UPDATE matches SET team2_id = ? WHERE id = ?";
+                                    if($upd_3rd_stmt = mysqli_prepare($conn, $upd_3rd_sql)){
+                                        mysqli_stmt_bind_param($upd_3rd_stmt, "ii", $loser_id, $match_3rd_id);
+                                        mysqli_stmt_execute($upd_3rd_stmt);
+                                    }
+                                } else {
+                                    $ins_3rd_sql = $is_team1 ? 
+                                        "INSERT INTO matches (tournament_id, team1_id, round, match_number, match_date) VALUES (?, ?, ?, ?, ?)" : 
+                                        "INSERT INTO matches (tournament_id, team2_id, round, match_number, match_date) VALUES (?, ?, ?, ?, ?)";
+                                    if($ins_3rd_stmt = mysqli_prepare($conn, $ins_3rd_sql)){
+                                        $match_date_3rd = date('Y-m-d H:i:s', strtotime('+1 day'));
+                                        mysqli_stmt_bind_param($ins_3rd_stmt, "iiiis", $tournament_id, $loser_id, $round_3rd, $third_place_match_num, $match_date_3rd);
+                                        mysqli_stmt_execute($ins_3rd_stmt);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Special case: If this was the 3rd place match
+                        if($cur_round == $max_rounds + 1){
+                            mysqli_query($conn, "UPDATE tournament_teams SET rank = 3 WHERE tournament_id = $tournament_id AND team_id = $winner_id");
+                        }
+                    }
+                }
             }
         }
     }
@@ -125,9 +230,10 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["generate_bracket"])){
             // Round Robin: Everyone plays everyone
             for($i = 0; $i < count($teams); $i++){
                 for($j = $i + 1; $j < count($teams); $j++){
-                    $insert_match = "INSERT INTO matches (tournament_id, team1_id, team2_id, match_date) VALUES (?, ?, ?, ?)";
+                    $insert_match = "INSERT INTO matches (tournament_id, team1_id, team2_id, match_date, round, match_number) VALUES (?, ?, ?, ?, 1, ?)";
                     if($stmt = mysqli_prepare($conn, $insert_match)){
-                        mysqli_stmt_bind_param($stmt, "iiis", $tournament_id, $teams[$i], $teams[$j], $match_date);
+                        $match_num = $i * count($teams) + $j;
+                        mysqli_stmt_bind_param($stmt, "iiisi", $tournament_id, $teams[$i], $teams[$j], $match_date, $match_num);
                         mysqli_stmt_execute($stmt);
                         $match_date = date('Y-m-d H:i:s', strtotime($match_date . ' + 2 hours'));
                     }
@@ -135,18 +241,34 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["generate_bracket"])){
             }
             $_SESSION["success"] = "Round Robin bracket generated successfully!";
         } else {
-            // Single or Double Elimination (First Round)
+            // Single Elimination (First Round)
             shuffle($teams);
+            $match_num = 1;
             for($i = 0; $i < count($teams) - 1; $i += 2){
-                $insert_match = "INSERT INTO matches (tournament_id, team1_id, team2_id, match_date) VALUES (?, ?, ?, ?)";
+                $insert_match = "INSERT INTO matches (tournament_id, team1_id, team2_id, match_date, round, match_number) VALUES (?, ?, ?, ?, 1, ?)";
                 if($stmt = mysqli_prepare($conn, $insert_match)){
-                    mysqli_stmt_bind_param($stmt, "iiis", $tournament_id, $teams[$i], $teams[$i+1], $match_date);
+                    mysqli_stmt_bind_param($stmt, "iiisi", $tournament_id, $teams[$i], $teams[$i+1], $match_date, $match_num);
                     mysqli_stmt_execute($stmt);
                     $match_date = date('Y-m-d H:i:s', strtotime($match_date . ' + 2 hours'));
+                    $match_num++;
                 }
             }
             if(count($teams) % 2 != 0){
-                $_SESSION["info"] = "Bracket generated. One team received a bye as there was an odd number of teams.";
+                // Handling bye: last team moves to next round
+                $last_team_id = end($teams);
+                $next_match_num = ceil($match_num / 2);
+                $is_team1 = ($match_num % 2 != 0);
+                
+                $insert_bye = $is_team1 ? 
+                    "INSERT INTO matches (tournament_id, team1_id, round, match_number, match_date) VALUES (?, ?, 2, ?, ?)" : 
+                    "INSERT INTO matches (tournament_id, team2_id, round, match_number, match_date) VALUES (?, ?, 2, ?, ?)";
+                
+                if($stmt = mysqli_prepare($conn, $insert_bye)){
+                    $next_date = date('Y-m-d H:i:s', strtotime($match_date . ' + 1 day'));
+                    mysqli_stmt_bind_param($stmt, "iiis", $tournament_id, $last_team_id, $next_match_num, $next_date);
+                    mysqli_stmt_execute($stmt);
+                }
+                $_SESSION["info"] = "Bracket generated. " . htmlspecialchars($last_team_id) . " received a bye and moved to Round 2.";
             } else {
                 $_SESSION["success"] = "First round bracket generated successfully!";
             }
@@ -161,20 +283,20 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["generate_bracket"])){
 }
 
 // Clear Matches
-if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["clear_matches"])){
-    $clear_sql = "DELETE FROM matches WHERE tournament_id = ?";
-    if($clear_stmt = mysqli_prepare($conn, $clear_sql)){
-        mysqli_stmt_bind_param($clear_stmt, "i", $tournament_id);
-        mysqli_stmt_execute($clear_stmt);
-        
-        // Reset team records
-        mysqli_query($conn, "UPDATE tournament_teams SET wins = 0, losses = 0, points = 0 WHERE tournament_id = $tournament_id");
-        
-        $_SESSION["success"] = "All matches cleared and standings reset.";
-        header("location: tournament_details.php?id=" . $tournament_id);
-        exit;
-    }
-}
+        if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["clear_matches"])){
+            $clear_sql = "DELETE FROM matches WHERE tournament_id = ?";
+            if($clear_stmt = mysqli_prepare($conn, $clear_sql)){
+                mysqli_stmt_bind_param($clear_stmt, "i", $tournament_id);
+                mysqli_stmt_execute($clear_stmt);
+                
+                // Reset team records
+                mysqli_query($conn, "UPDATE tournament_teams SET wins = 0, losses = 0, points = 0, rank = 0 WHERE tournament_id = $tournament_id");
+                
+                $_SESSION["success"] = "All matches cleared and standings reset.";
+                header("location: tournament_details.php?id=" . $tournament_id);
+                exit;
+            }
+        }
 ?>
 
 <!DOCTYPE html>
@@ -438,6 +560,30 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["clear_matches"])){
                                 </button>
                             </div>
                             <div class="card-body">
+                                <?php
+                                $rankings_sql = "SELECT t.team_name, tt.rank 
+                                               FROM tournament_teams tt 
+                                               JOIN teams t ON tt.team_id = t.id 
+                                               WHERE tt.tournament_id = ? AND tt.rank > 0 
+                                               ORDER BY tt.rank ASC";
+                                if($rank_stmt = mysqli_prepare($conn, $rankings_sql)){
+                                    mysqli_stmt_bind_param($rank_stmt, "i", $tournament_id);
+                                    mysqli_stmt_execute($rank_stmt);
+                                    $rank_res = mysqli_stmt_get_result($rank_stmt);
+                                    if(mysqli_num_rows($rank_res) > 0){
+                                        echo '<div class="alert alert-warning border-0 shadow-sm mb-4">';
+                                        echo '<h6 class="fw-bold mb-2"><i class="bx bxs-award me-2"></i>Tournament Rankings</h6>';
+                                        while($rank = mysqli_fetch_assoc($rank_res)){
+                                            $medal = "";
+                                            if($rank['rank'] == 1) $medal = "<i class='bx bxs-medal text-warning'></i> Champion: ";
+                                            if($rank['rank'] == 2) $medal = "<i class='bx bxs-medal text-secondary'></i> 2nd Place: ";
+                                            if($rank['rank'] == 3) $medal = "<i class='bx bxs-medal text-danger'></i> 3rd Place: ";
+                                            echo "<div>$medal <strong>" . htmlspecialchars($rank['team_name']) . "</strong></div>";
+                                        }
+                                        echo '</div>';
+                                    }
+                                }
+                                ?>
                                 <div class="table-responsive">
                                     <table class="table standings-table">
                                         <thead>
