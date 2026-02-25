@@ -227,6 +227,13 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
                         <button type="submit" class="btn btn-login">
                             <i class='bx bx-log-in-circle me-2'></i>Login
                         </button>
+                        
+                        <div class="text-center mt-4 pt-3 border-top">
+                            <p class="mb-2 text-muted small">Are you a fan or player?</p>
+                            <a href="public_view.php" class="btn btn-outline-primary btn-sm w-100 py-2">
+                                <i class='bx bx-show me-2'></i>View Public Standings
+                            </a>
+                        </div>
                     </form>
                 </div>
             </div>
