@@ -178,6 +178,44 @@ if ($tournament_id) {
                 </div>
 
                 <div class="col-lg-4">
+                    <!-- Rankings -->
+                    <?php
+                    $rankings_sql = "SELECT t.team_name, tt.rank 
+                                    FROM tournament_teams tt 
+                                    JOIN teams t ON tt.team_id = t.id 
+                                    WHERE tt.tournament_id = ? AND tt.rank > 0 
+                                    ORDER BY tt.rank ASC";
+                    if($rank_stmt = mysqli_prepare($conn, $rankings_sql)){
+                        mysqli_stmt_bind_param($rank_stmt, "i", $tournament_id);
+                        mysqli_stmt_execute($rank_stmt);
+                        $rank_res = mysqli_stmt_get_result($rank_stmt);
+                        if(mysqli_num_rows($rank_res) > 0){
+                    ?>
+                        <div class="card mb-4 border-0 shadow-sm" style="background: linear-gradient(135deg, #fff 0%, #fff9e6 100%);">
+                            <div class="card-body">
+                                <h5 class="text-warning-emphasis fw-bold mb-3"><i class='bx bxs-award me-2'></i>Tournament Results</h5>
+                                <?php
+                                while($rank = mysqli_fetch_assoc($rank_res)){
+                                    $medal_class = "";
+                                    $label = "";
+                                    if($rank['rank'] == 1) { $medal_class = "text-warning"; $label = "Champion"; }
+                                    if($rank['rank'] == 2) { $medal_class = "text-secondary"; $label = "2nd Place"; }
+                                    if($rank['rank'] == 3) { $medal_class = "text-danger"; $label = "3rd Place"; }
+                                ?>
+                                    <div class="d-flex align-items-center mb-2 p-2 rounded bg-white shadow-sm">
+                                        <i class='bx bxs-medal fs-3 <?php echo $medal_class; ?> me-3'></i>
+                                        <div>
+                                            <div class="small text-muted"><?php echo $label; ?></div>
+                                            <div class="fw-bold"><?php echo htmlspecialchars($rank['team_name']); ?></div>
+                                        </div>
+                                    </div>
+                                <?php } ?>
+                            </div>
+                        </div>
+                    <?php
+                        }
+                    }
+                    ?>
                     <!-- Standings -->
                     <div class="card">
                         <div class="card-header">
