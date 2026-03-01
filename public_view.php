@@ -228,17 +228,16 @@ if ($tournament_id) {
                                         <tr>
                                             <th class="ps-3">Team</th>
                                             <th class="text-center">W</th>
-                                            <th class="text-center">L</th>
-                                            <th class="text-center pe-3">Pts</th>
+                                            <th class="text-center pe-3">L</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <?php
-                                        $standings_sql = "SELECT t.team_name, tt.wins, tt.losses, tt.points 
+                                        $standings_sql = "SELECT t.team_name, tt.wins, tt.losses 
                                                         FROM tournament_teams tt 
                                                         JOIN teams t ON tt.team_id = t.id 
                                                         WHERE tt.tournament_id = ? 
-                                                        ORDER BY tt.points DESC, tt.wins DESC";
+                                                        ORDER BY tt.wins DESC, tt.losses ASC";
                                         if ($stmt = mysqli_prepare($conn, $standings_sql)) {
                                             mysqli_stmt_bind_param($stmt, "i", $tournament_id);
                                             mysqli_stmt_execute($stmt);
@@ -247,8 +246,7 @@ if ($tournament_id) {
                                                 echo "<tr>";
                                                 echo "<td class='ps-3 fw-bold'>" . htmlspecialchars($row['team_name']) . "</td>";
                                                 echo "<td class='text-center'>" . $row['wins'] . "</td>";
-                                                echo "<td class='text-center'>" . $row['losses'] . "</td>";
-                                                echo "<td class='text-center pe-3'>" . $row['points'] . "</td>";
+                                                echo "<td class='text-center pe-3'>" . $row['losses'] . "</td>";
                                                 echo "</tr>";
                                             }
                                         }

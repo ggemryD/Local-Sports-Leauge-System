@@ -146,7 +146,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["update_match"])){
                         // For simplicity, we can check if there are any more matches in the next round
                         // or if this was the last match possible.
                         // Better: If no next round is possible (e.g., only 1 match in current round), it's the final.
-                        $matches_in_round_sql = "SELECT COUNT(*) as count FROM tournament_teams WHERE tournament_id = ?";
+                        $matches_in_round_sql = "SELECT COUNT(*) as count FROM tournament_teams WHERE tournament_id = $tournament_id";
                         $tt_res = mysqli_query($conn, $matches_in_round_sql);
                         $total_teams = mysqli_fetch_assoc($tt_res)['count'];
                         $max_rounds = ceil(log($total_teams, 2));
@@ -591,16 +591,15 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["generate_bracket"])){
                                                 <th>Team</th>
                                                 <th class="text-center">W</th>
                                                 <th class="text-center">L</th>
-                                                <th class="text-center">Pts</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             <?php
-                                            $standings_sql = "SELECT t.team_name, tt.wins, tt.losses, tt.points 
+                                            $standings_sql = "SELECT t.team_name, tt.wins, tt.losses 
                                                             FROM tournament_teams tt 
                                                             JOIN teams t ON tt.team_id = t.id 
                                                             WHERE tt.tournament_id = ? 
-                                                            ORDER BY tt.points DESC";
+                                                            ORDER BY tt.wins DESC, tt.losses ASC";
                                             if($standings_stmt = mysqli_prepare($conn, $standings_sql)){
                                                 mysqli_stmt_bind_param($standings_stmt, "i", $tournament_id);
                                                 mysqli_stmt_execute($standings_stmt);
@@ -610,7 +609,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["generate_bracket"])){
                                                     echo "<td>" . htmlspecialchars($row['team_name']) . "</td>";
                                                     echo "<td class='text-center team-record'>" . $row['wins'] . "</td>";
                                                     echo "<td class='text-center team-record'>" . $row['losses'] . "</td>";
-                                                    echo "<td class='text-center team-record'>" . $row['points'] . "</td>";
                                                     echo "</tr>";
                                                 }
                                             }
